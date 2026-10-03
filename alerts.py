@@ -2,6 +2,8 @@ import hashlib
 import json
 import os
 import re
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -63,9 +65,17 @@ class State:
  
  
 def get(url):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return resp.read().decode("utf-8", "ignore")
+    time.sleep(1)  # be polite to the sites we visit
+    for attempt in range(2):
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return resp.read().decode("utf-8", "ignore")
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429 and attempt == 0:
+                time.sleep(8)  # rate limited: wait and try once more
+                continue
+            raise
  
  
 def send(text):
@@ -143,7 +153,8 @@ def watch_page(state, artist, url, out):
     try:
         html = get(url)
     except Exception as exc:
-        print(f"Skipped {url}: {exc}")
+        if "404" not in str(exc):  # missing pages are normal, so stay quiet
+            print(f"Skipped {url}: {exc}")
         return
     marker = "seeded:" + url
     first = not state.has(marker)
@@ -226,6 +237,7 @@ def check_tickets(state, artist, out):
     except Exception as exc:
         print(f"Ticketmaster failed for {artist}: {exc}")
         return
+    print(f"Ticketmaster: {len(events)} events found for {artist}")
     marker = "seeded:tm:" + artist
     first = not state.has(marker)
     state.add(marker)
@@ -284,6 +296,7 @@ def main():
     first_run = not os.path.exists(SEEN_FILE)
     state = State([] if first_run else json.load(open(SEEN_FILE)))
     out = []
+    print("Ticketmaster key found" if TM_KEY else "Ticketmaster key NOT set")
  
     for artist in ARTISTS:
         check_news(state, artist, first_run, out)
